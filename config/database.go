@@ -8,6 +8,8 @@ import (
 	"path/filepath" // для работы с путями
 	"time"          // для работы со временем
 
+	"server_new/migrations" // для миграций БД
+
 	_ "github.com/mattn/go-sqlite3" // драйвер SQLite (импортируем для регистрации)
 )
 
@@ -15,14 +17,19 @@ var DB *sql.DB // глобальная переменная для соедин�
 
 // InitDB инициализирует базу данных
 func InitDB() error {
-	// Создаём папку .tmp, если её нет
-	tmpDir := ".tmp"
-	if err := os.MkdirAll(tmpDir, 0755); err != nil {
-		return fmt.Errorf("не удалось создать папку .tmp: %v", err)
+	// Используем путь из конфигурации (из .env или значения по умолчанию)
+	dbPath := DBPath
+	if dbPath == "" {
+		dbPath = ".tmp/base.sqlite"
 	}
 
-	// Путь к файлу базы данных
-	dbPath := filepath.Join(tmpDir, "base.sqlite")
+	// Создаём директорию для базы данных, если её нет
+	dbDir := filepath.Dir(dbPath)
+	if dbDir != "." && dbDir != "" {
+		if err := os.MkdirAll(dbDir, 0755); err != nil {
+			return fmt.Errorf("не удалось создать папку для БД (%s): %v", dbDir, err)
+		}
+	}
 
 	// Открываем соединение с базой данных
 	// Если файла нет, SQLite создаст его автоматически
@@ -47,55 +54,13 @@ func InitDB() error {
 		return fmt.Errorf("не удалось включить внешние ключи: %v", err)
 	}
 
-	// Создаём таблицы
-	if err := createTables(db); err != nil {
-		return fmt.Errorf("не удалось создать таблицы: %v", err)
+	// Запускаем миграции
+	if err := migrations.RunMigrations(db); err != nil {
+		return fmt.Errorf("не удалось применить миграции: %v", err)
 	}
 
 	DB = db
 	log.Println("База данных инициализирована успешно")
-	return nil
-}
-
-// createTables создаёт таблицы users и tasks
-func createTables(db *sql.DB) error {
-	// Создаём таблицу users
-	createUsersTable := `
-	CREATE TABLE IF NOT EXISTS users (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		username TEXT UNIQUE NOT NULL,
-		email TEXT UNIQUE NOT NULL,
-		password TEXT NOT NULL,
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-	);`
-
-	_, err := db.Exec(createUsersTable)
-	if err != nil {
-		return fmt.Errorf("не удалось создать таблицу users: %v", err)
-	}
-	log.Println("Таблица users создана")
-
-	// Создаём таблицу tasks
-	createTasksTable := `
-	CREATE TABLE IF NOT EXISTS tasks (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		title TEXT NOT NULL,
-		description TEXT NOT NULL DEFAULT '',
-		status TEXT NOT NULL DEFAULT 'pending' CHECK (
-			status IN ('pending', 'in_progress', 'completed')
-		),
-		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		due_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-		userid INTEGER NOT NULL DEFAULT 1,
-		FOREIGN KEY(userid) REFERENCES users(id) ON DELETE CASCADE
-	);`
-
-	_, err = db.Exec(createTasksTable)
-	if err != nil {
-		return fmt.Errorf("не удалось создать таблицу tasks: %v", err)
-	}
-	log.Println("Таблица tasks создана")
-
 	return nil
 }
 
