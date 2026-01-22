@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -893,16 +894,7 @@ func main() {
 	// Используем разрешённые origins из конфигурации
 	allowedOrigins := config.AllowedOrigins
 
-	// Обработчик для OPTIONS запросов (preflight)
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodOptions {
-			middleware.CORSHandler(allowedOrigins)(w, r)
-			return
-		}
-		http.NotFound(w, r)
-	})
-
-	// Регистрируем маршруты с CORS middleware
+	// Регистрируем маршруты с CORS middleware (API маршруты регистрируются первыми)
 	http.HandleFunc("/info", middleware.CORS(allowedOrigins)(infoHandler))
 	http.HandleFunc("/auth/register", middleware.CORS(allowedOrigins)(registerHandler))
 	http.HandleFunc("/auth/login", middleware.CORS(allowedOrigins)(loginHandler))
@@ -943,6 +935,59 @@ func main() {
 
 	// Маршрут для загрузки файлов
 	http.HandleFunc("/upload", handlers.UploadFileHandler)
+
+	// Обработчик для статических файлов (фронтенд) - регистрируется последним
+	// Получаем абсолютный путь к папке client
+	workDir, _ := os.Getwd()
+	staticDir := filepath.Join(workDir, "client")
+	log.Printf("Статические файлы будут обслуживаться из: %s", staticDir)
+
+	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			middleware.CORSHandler(allowedOrigins)(w, r)
+			return
+		}
+
+		path := r.URL.Path
+
+		// Если запрос к корню, отдаём index.html
+		if path == "/" {
+			indexPath := filepath.Join(staticDir, "index.html")
+			if _, err := os.Stat(indexPath); err == nil {
+				http.ServeFile(w, r, indexPath)
+				return
+			}
+			http.NotFound(w, r)
+			return
+		}
+
+		// Убираем начальный слэш для построения пути к файлу
+		cleanPath := strings.TrimPrefix(path, "/")
+		if cleanPath == "" {
+			cleanPath = "index.html"
+		}
+
+		// Безопасно строим путь к файлу
+		filePath := filepath.Join(staticDir, cleanPath)
+
+		// Проверяем, что путь находится внутри staticDir (защита от path traversal)
+		relPath, err := filepath.Rel(staticDir, filePath)
+		if err != nil || strings.HasPrefix(relPath, "..") {
+			log.Printf("Попытка доступа вне staticDir: %s", path)
+			http.NotFound(w, r)
+			return
+		}
+
+		// Проверяем существование файла
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			log.Printf("Файл не найден: %s (запрошенный путь: %s)", filePath, path)
+			http.NotFound(w, r)
+			return
+		}
+
+		// Отдаём файл
+		http.ServeFile(w, r, filePath)
+	})
 
 	// Создаём HTTP сервер
 	srv := &http.Server{

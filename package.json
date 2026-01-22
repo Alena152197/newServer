@@ -1,0 +1,12 @@
+{
+  "name": "server_new",
+  "version": "1.0.0",
+  "description": "Frontend with Tailwind CSS",
+  "scripts": {
+    "build-css": "tailwindcss -i ./client/css/input.css -o ./client/css/output.css --minify",
+    "watch-css": "tailwindcss -i ./client/css/input.css -o ./client/css/output.css --watch"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.0"
+  }
+}
